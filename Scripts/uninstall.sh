@@ -1,6 +1,10 @@
 #!/bin/sh
-# PublishDev — Created by Mark Battistella
 #
+# Project: PublishDev
+# Author: Mark Battistella
+# Website: https://markbattistella.com
+#
+
 # Removes the shim and puts the Publish CLI back where it was.
 set -eu
 

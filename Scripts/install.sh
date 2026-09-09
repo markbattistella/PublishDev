@@ -1,6 +1,10 @@
 #!/bin/sh
-# PublishDev — Created by Mark Battistella
 #
+# Project: PublishDev
+# Author: Mark Battistella
+# Website: https://markbattistella.com
+#
+
 # Installs `publish dev` by putting a small shim in front of the Publish CLI.
 set -eu
 

@@ -1,3 +1,9 @@
+//
+// Project: PublishDev
+// Author: Mark Battistella
+// Website: https://markbattistella.com
+//
+
 import Darwin
 import Foundation
 import Testing
