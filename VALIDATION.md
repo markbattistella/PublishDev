@@ -1,5 +1,16 @@
 # Validation
 
+## One-command releases — 25 September 2026
+
+- All 30 release-tool tests passed, including publication to isolated local bare Git repositories. No real remote was pushed.
+- Verified version edits and already-prepared bumps are committed, existing matching commits need no empty commit, and remote branch/tag versions agree after publication.
+- Verified unfinished work, edits outside the version declaration, detached HEAD, behind branches, downgrades, and conflicting local or remote tags stop publication.
+- Verified atomic pushes leave the remote branch unchanged when a tag is rejected or atomic push support is unavailable. Retrying after a failed push reuses the matching local tag and commit.
+- Verified failed commit hooks and changes made by hooks stop publication, separate push URLs are checked, and `push.followTags` cannot publish unrelated tags.
+- Swift formatting lint, workflow YAML parsing, Make target dry runs, and `git diff --check` passed. The existing uncommitted source version of `1.0.0` was preserved.
+
+The real GitHub workflow was not triggered. Commit these tooling changes before using `make release VERSION=x.y.z`; GitHub publication still requires its validation job to succeed.
+
 ## Release publication checks — 24 September 2026
 
 - All 14 release-tool tests passed: source/tag and binary/version mismatches, stable tag parsing, interactive approval and decline, explicit noninteractive approval, downgrade rejection, CLI exit codes, and GitHub error annotations.

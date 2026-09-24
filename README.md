@@ -128,37 +128,40 @@ The Swift tests cover preview staging and injection, failure retention, symlink 
 
 ## Publishing a release
 
-Prepare the source version before committing or tagging:
+Commit your code and release notes as usual, then release with one command:
 
 ```sh
-make prepare-release VERSION=0.1.2
+make release VERSION=1.0.0
 ```
 
-If the source still reports an older version, the command asks whether to update `ReleaseVersion.current` in `Sources/PublishDev/ReleaseVersion.swift`. Return cancels without changing files. The helper only edits the version; review it and your release notes, then commit and push the changes. For an explicitly approved noninteractive edit, use `python3 Scripts/release.py prepare 0.1.2 --yes`.
+This command:
 
-You can check the source version locally before tagging:
+1. Checks the branch, working tree, remote, and existing tags before changing the version.
+2. Updates `ReleaseVersion.current` in `Sources/PublishDev/ReleaseVersion.swift` and commits it as `Release 1.0.0`. An already-prepared version bump is also accepted; an already-committed version needs no extra commit.
+3. Creates the matching annotated tag.
+4. Pushes the current branch and tag to `origin` together with an atomic push. Both arrive, or neither does.
+
+You do not need to push the branch first, tag manually, or create a GitHub Release. The command pushes any existing commits on the current branch too. Only the version bump is committed automatically: staged, unstaged, or untracked changes to other files must be committed first. Edits elsewhere in the version file must also be committed first. Existing Git hooks still run.
+
+If a commit or push fails, the command keeps local progress and prints a retry command. Fix the reported issue and rerun the same `make release VERSION=...`; a local tag is reused only when it points at the current, clean, matching commit. Existing remote tags are never overwritten. Behind or diverged branches must be reconciled first, and remotes without atomic push support fail without a partial push.
+
+The preparation and check commands remain available as optional local steps:
 
 ```sh
-make check-release VERSION=0.1.2
+make prepare-release VERSION=1.0.0  # prompts to edit the version only; release-version is an alias
+make check-release VERSION=1.0.0   # checks the source without committing or publishing
 ```
 
-After committing and pushing the preparation, push the matching tag:
-
-```sh
-git tag 0.1.2
-git push origin 0.1.2
-```
-
-The **Validate and publish release** GitHub Actions workflow then:
+After the tag is pushed, the **Validate and publish release** GitHub Actions workflow:
 
 1. Checks out that exact tag and rejects a source-version mismatch with an explanation and repair command.
 2. Runs the release-tool tests, Swift formatting checks, and Swift tests.
 3. Builds the release executable, verifies its `--version` output matches the tag, and runs the terminal session checks.
 4. Confirms the remote tag still points to the tested commit, then publishes a GitHub Release with generated release notes. An existing release is left unchanged.
 
-A failed check prevents this workflow from publishing. Both `0.1.2` and `v0.1.2` tag styles work. Use stable versions; prerelease tags are rejected. No binary release assets are needed because the updater builds the tagged source on each user's Mac.
+A failed check prevents this workflow from publishing. Both `1.0.0` and `v1.0.0` tag styles work. Use an unused stable version; prerelease tags are rejected. Once the workflow publishes successfully, installed copies can discover it through `publish dev update`. No binary release assets are needed because the updater builds the tagged source on each user's Mac.
 
-**Push the tag and let the workflow publish it.** Creating a release manually through GitHub publishes it before validation runs. The workflow also checks manually published or edited releases, but it cannot prevent that initial publication or automatically retract it. If a bad release is already public, unpublish it and prepare a fresh version rather than moving a published tag.
+**Use `make release` and let the workflow publish it.** Creating a release manually through GitHub publishes it before validation runs. The workflow also checks manually published or edited releases, but it cannot prevent that initial publication or automatically retract it. If a bad release is already public, unpublish it and release a fresh version rather than moving a published tag.
 
 The workflow and helper must be committed into the release's tagged source. Older tags that predate the workflow are not retroactively protected. The workflow requests `contents: write` only for its publishing job; repository or organization policies must allow that permission. Its read-only validation job uses Xcode 26.2 on `macos-15` for Swift 6.2 support. The Actions **Run workflow** form can validate an existing tag without publishing anything.
 

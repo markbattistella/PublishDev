@@ -64,7 +64,7 @@ jobs:
           {
             echo '### Release validation failed'
             echo 'See the failed step above. No release was published by this workflow.'
-            echo 'For a version mismatch, run `make prepare-release VERSION=<new-version>`, commit the change, and tag that commit.'
+            echo 'For a version mismatch, commit your code changes and run `make release VERSION=<new-unused-version>` to commit the matching version and push the branch and tag together.'
             if [ "$TRIGGER" = release ]; then
               echo '**This release was already published manually. Unpublish the invalid release and publish a corrected version through the tag workflow.**'
             fi

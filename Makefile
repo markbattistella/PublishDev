@@ -1,7 +1,7 @@
 PREFIX ?= /usr/local
 export VERSION
 
-.PHONY: build test test-session test-release prepare-release check-release format lint install uninstall
+.PHONY: build test test-session test-release release prepare-release release-version check-release format lint install uninstall
 
 build:
 	swift build -c release
@@ -16,8 +16,12 @@ test-session:
 test-release:
 	python3 -B -m unittest discover -s Tests/ReleaseToolTests -p 'test_*.py'
 
-# Example: make prepare-release VERSION=0.1.2
-prepare-release:
+# Commit the version and push the branch and tag; GitHub validates and publishes.
+release:
+	python3 Scripts/release.py release "$$VERSION"
+
+# Optional edit-only step. `make release` includes this automatically.
+prepare-release release-version:
 	python3 Scripts/release.py prepare "$$VERSION"
 
 check-release:
