@@ -10,7 +10,8 @@ import Foundation
 enum ChildProcess {
     /// Own the build's process group and clean up descendants that create their own groups.
     static func run(
-        _ arguments: [String], in directory: URL, stdout: URL? = nil, stderr: URL? = nil
+        _ arguments: [String], in directory: URL, stdout: URL? = nil, stderr: URL? = nil,
+        terminalInput: Bool = false, environment: [String: String] = [:]
     ) async throws -> Int32 {
         try Task.checkCancellation()
         var actions: posix_spawn_file_actions_t?
@@ -21,14 +22,18 @@ enum ChildProcess {
         defer { posix_spawnattr_destroy(&attributes) }
 
         try check(posix_spawn_file_actions_addchdir_np(&actions, directory.path))
-        try check(
-            posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0))
+        if !terminalInput {
+            try check(
+                posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0))
+        }
         if let stdout {
             try check(
                 posix_spawn_file_actions_addopen(
                     &actions, STDOUT_FILENO, stdout.path, O_WRONLY | O_CREAT | O_TRUNC, 0o600))
         }
-        if let stderr {
+        if let stderr, stderr == stdout {
+            try check(posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO))
+        } else if let stderr {
             try check(
                 posix_spawn_file_actions_addopen(
                     &actions, STDERR_FILENO, stderr.path, O_WRONLY | O_CREAT | O_TRUNC, 0o600))
@@ -37,19 +42,25 @@ enum ChildProcess {
         sigemptyset(&defaults)
         sigaddset(&defaults, SIGINT)
         sigaddset(&defaults, SIGTERM)
+        sigaddset(&defaults, SIGHUP)
+        sigaddset(&defaults, SIGPIPE)
         var mask = sigset_t()
         sigemptyset(&mask)
         try check(posix_spawnattr_setsigdefault(&attributes, &defaults))
         try check(posix_spawnattr_setsigmask(&attributes, &mask))
-        try check(posix_spawnattr_setpgroup(&attributes, 0))
+        // A password prompt must remain in the terminal's foreground process group.
+        if !terminalInput { try check(posix_spawnattr_setpgroup(&attributes, 0)) }
         try check(
             posix_spawnattr_setflags(
                 &attributes,
-                Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK)))
+                Int16(
+                    (terminalInput ? 0 : POSIX_SPAWN_SETPGROUP) | POSIX_SPAWN_SETSIGDEF
+                        | POSIX_SPAWN_SETSIGMASK)))
 
         let argv = (["/usr/bin/env"] + arguments).map { strdup($0) } + [nil]
         let env =
-            ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+            ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+            .map { strdup("\($0.key)=\($0.value)") } + [nil]
         defer {
             for pointer in argv { free(pointer) }
             for pointer in env { free(pointer) }
@@ -73,13 +84,13 @@ enum ChildProcess {
         } catch {
             let descendants = descendants(of: pid)
             for descendant in descendants { descendant.send(SIGTERM) }
-            kill(-pid, SIGTERM)
+            kill(terminalInput ? pid : -pid, SIGTERM)
             // Await shielded cleanup: the calling task is already cancelled.
             let childPID = pid
             await Task.detached {
                 try? await Task.sleep(for: .milliseconds(500))
                 for descendant in descendants { descendant.send(SIGKILL) }
-                kill(-childPID, SIGKILL)
+                kill(terminalInput ? childPID : -childPID, SIGKILL)
                 var status: Int32 = 0
                 while waitpid(childPID, &status, 0) == -1 && errno == EINTR {}
             }.value
@@ -87,34 +98,14 @@ enum ChildProcess {
         }
     }
 
-    private struct Identity: Equatable, Sendable {
-        let pid: pid_t
-        let seconds: UInt64
-        let microseconds: UInt64
-
-        init?(_ pid: pid_t) {
-            var info = proc_bsdinfo()
-            let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
-            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
-            self.pid = pid
-            seconds = info.pbi_start_tvsec
-            microseconds = info.pbi_start_tvusec
-        }
-
-        func send(_ signal: Int32) {
-            // A descendant can exit and have its PID reused during the grace period.
-            if Identity(pid) == self { kill(pid, signal) }
-        }
-    }
-
-    private static func descendants(of pid: pid_t) -> [Identity] {
+    private static func descendants(of pid: pid_t) -> [ProcessIdentity] {
         let capacity = max(16, Int(proc_listchildpids(pid, nil, 0)) + 16)
         var children = [pid_t](repeating: 0, count: capacity)
         let count = children.withUnsafeMutableBytes { buffer in
             proc_listchildpids(pid, buffer.baseAddress, Int32(buffer.count))
         }
         return children.prefix(max(0, Int(count))).filter { $0 > 0 }.flatMap { child in
-            descendants(of: child) + [Identity(child)].compactMap { $0 }
+            descendants(of: child) + [ProcessIdentity(child)].compactMap { $0 }
         }
     }
 

@@ -1,12 +1,16 @@
 PREFIX ?= /usr/local
 
-.PHONY: build test format lint install uninstall
+.PHONY: build test test-session format lint install uninstall
 
 build:
 	swift build -c release
 
 test:
 	swift test
+
+test-session:
+	swift build
+	python3 Scripts/test-session.py "$$(swift build --show-bin-path)/publish-dev"
 
 format:
 	swift format --in-place --recursive Package.swift Sources Tests

@@ -233,6 +233,13 @@ func servesTheStagedWebsiteWithPython() async throws {
         }
         #expect(!revision.isEmpty)
         #expect(throws: DevError.self) { try PreviewServer.checkPort(port) }
+        await #expect(throws: DevError.self) {
+            try await PreviewServer.waitUntilListening(
+                port: port, log: folder.appendingPathComponent("another-server.log"),
+                timeout: .milliseconds(75))
+        }
+        try await PreviewServer.waitUntilListening(
+            port: port, log: folder.appendingPathComponent("server.log"))
 
         let (home, homeResponse) = try await get("/")
         #expect(homeResponse.statusCode == 200)
@@ -256,4 +263,28 @@ func servesTheStagedWebsiteWithPython() async throws {
         group.cancelAll()
         while !group.isEmpty { _ = await group.nextResult() }
     }
+}
+
+@Test func staleSessionMetadataDoesNotBlockRestart() async throws {
+    let folder = try temporaryFolder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let path = folder.appendingPathComponent("session.lock").path
+    try Data("stale metadata".utf8).write(to: URL(fileURLWithPath: path))
+    #expect(chmod(path, 0o600) == 0)
+    let lock = try SessionLock(path: path)
+    try await lock.acquire(for: .site(folder.path))
+    try lock.write(
+        .init(process: try #require(ProcessIdentity(getpid())), site: folder.path, port: 8000))
+    withExtendedLifetime(lock) {}
+}
+
+@Test func rejectsSessionLockSymlinksWithoutModifyingTheirTarget() throws {
+    let folder = try temporaryFolder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let target = folder.appendingPathComponent("target")
+    let link = folder.appendingPathComponent("session.lock")
+    try Data("keep me".utf8).write(to: target)
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+    #expect(throws: DevError.self) { try SessionLock(path: link.path) }
+    #expect(try String(contentsOf: target, encoding: .utf8) == "keep me")
 }

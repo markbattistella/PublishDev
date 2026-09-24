@@ -12,48 +12,48 @@ struct DevelopmentSession {
     let options: Options
 
     func run() async throws {
+        try await runSession()
+        log("PublishDev stopped.")
+    }
+
+    private func runSession() async throws {
         let siteID = Self.siteID(options.site.path)
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(
             "publish-dev-\(getuid())-\(siteID)")
-
-        // Prevent two sessions from generating the same Output concurrently.
-        let lock = open(base.path + ".lock", O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
-        guard lock >= 0 else { throw DevError("Could not open the development session lock.") }
-        defer { close(lock) }
-        guard flock(lock, LOCK_EX | LOCK_NB) == 0 else {
-            throw DevError("PublishDev is already watching this website. Stop that session first.")
+        guard let process = ProcessIdentity(getpid()) else {
+            throw DevError("Could not identify this development session.")
         }
-        guard fcntl(lock, F_SETFD, FD_CLOEXEC) == 0 else {
-            throw DevError("Could not configure the development session lock.")
-        }
-
-        try PreviewServer.checkPort(options.port)
+        let siteLock = try SessionLock(path: base.path + ".lock")
+        try await siteLock.acquire(for: .site(options.site.path))
+        try siteLock.write(.init(process: process, site: options.site.path, port: options.port))
+        let (port, portLock) = try await reservePort(process: process)
+        // Keep both locks until all server and build cleanup has completed.
+        defer { withExtendedLifetime((siteLock, portLock)) {} }
+        try siteLock.write(.init(process: process, site: options.site.path, port: port))
+        let serverLog = base.appendingPathComponent("server.log")
         let preview = try Preview(base: base)
         defer { try? FileManager.default.removeItem(at: base) }
 
         let (changes, continuation) = AsyncStream<Void>.makeStream(
             bufferingPolicy: .bufferingNewest(1))
         defer { continuation.finish() }
-        let stop = Self.stopEvents()
-        defer { for source in stop.sources { source.cancel() } }
-
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
                 try await PreviewServer.run(
-                    directory: preview.live, port: options.port,
-                    log: base.appendingPathComponent("server.log"))
+                    directory: preview.live, port: port, log: serverLog)
             }
             group.addTask {
-                try await PreviewServer.waitUntilListening(port: options.port)
-                log("Preview: http://localhost:\(options.port)")
+                try await PreviewServer.waitUntilListening(port: port, log: serverLog)
+                log("Preview: http://localhost:\(port)")
                 log("Website: \(options.site.path)")
-                log("Watching inputs. Press ENTER to stop the server and exit.")
+                TerminalInput.showStopHint()
                 try await InputWatcher(paths: options.inputs).run(changes: continuation)
             }
             group.addTask {
                 for await _ in changes {
                     try Task.checkCancellation()
                     let started = ContinuousClock.now
+                    defer { if !Task.isCancelled { TerminalInput.showStopHint() } }
                     do {
                         let product = try await ChildProcess.executable(
                             in: options.site, requested: options.product)
@@ -81,8 +81,8 @@ struct DevelopmentSession {
                     }
                 }
             }
-            group.addTask {
-                for await _ in stop.stream { break }
+            if TerminalInput.isInteractive {
+                group.addTask { _ = try await TerminalInput.line() }
             }
             do {
                 try await group.next()
@@ -94,30 +94,33 @@ struct DevelopmentSession {
             // Cancellation during normal shutdown is expected.
             while !group.isEmpty { _ = await group.nextResult() }
         }
-        log("PublishDev stopped.")
     }
 
-    /// ENTER, Control-D, Control-C, or SIGTERM all end the session.
-    private static func stopEvents() -> (
-        stream: AsyncStream<Void>, sources: [any DispatchSourceSignal]
-    ) {
-        let (stream, continuation) = AsyncStream<Void>.makeStream(
-            bufferingPolicy: .bufferingNewest(1))
-        let sources = [SIGINT, SIGTERM].map { number in
-            signal(number, SIG_IGN)
-            let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
-            source.setEventHandler { continuation.yield(()) }
-            source.resume()
-            return source
-        }
-        // Without a terminal there is no ENTER to wait for, and readLine would return immediately.
-        if isatty(STDIN_FILENO) == 1 {
-            DispatchQueue.global(qos: .background).async {
-                _ = readLine()
-                continuation.yield(())
+    private func reservePort(process: ProcessIdentity) async throws -> (UInt16, SessionLock) {
+        var port = options.port
+        while true {
+            try Task.checkCancellation()
+            let path = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "publish-dev-\(getuid())-port-\(port).lock"
+            ).path
+            let lock = try SessionLock(path: path)
+            try await lock.acquire(for: .port(port))
+            do {
+                try PreviewServer.checkPort(port)
+            } catch let error as DevError {
+                guard TerminalInput.isInteractive,
+                    let alternative = try PreviewServer.availablePort(after: port)
+                else { throw error }
+                log(error.localizedDescription)
+                guard try await TerminalInput.confirm("Use port \(alternative) instead?") else {
+                    throw CancellationError()
+                }
+                port = alternative
+                continue
             }
+            try lock.write(.init(process: process, site: options.site.path, port: port))
+            return (port, lock)
         }
-        return (stream, sources)
     }
 
     private static func siteID(_ path: String) -> String {

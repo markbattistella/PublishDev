@@ -27,6 +27,25 @@ The installer prints every change it will make outside the project and waits for
 
 `publish` with no arguments still prints Publish's own help, with `dev` added to the list. Use `PREFIX=~/.local make install` for a different location, and `make uninstall` to remove the shim and put the Publish CLI back as `publish`.
 
+## Update an existing installation
+
+To install changes from this checkout, stop your preview and run `make install` again. Use the same `PREFIX` if you originally installed somewhere other than `/usr/local`. Existing installations need this manual update once to receive the release updater.
+
+```sh
+publish dev --version
+publish dev update --check  # Check GitHub without installing
+publish dev update          # Confirm, build, and install a newer release
+publish dev update --yes    # Explicitly approve installation without an update prompt
+```
+
+An installed copy checks for a newer stable GitHub release before starting an interactive preview, at most once per 24 hours. It shows the available version and release link, then asks `Update now? [y/N]`. Return skips the update for that day. Accepting builds and installs the release, then restarts your original preview command with the new version. Manual `update` commands always check GitHub immediately.
+
+Checks have a three-second network timeout. Offline checks and API errors do not prevent previewing. Use `publish dev --no-update-check` or set `PUBLISH_DEV_NO_UPDATE_CHECK=1` to disable automatic checks. Development checkouts and noninteractive previews do not check automatically. The last check time is stored in `~/Library/Caches/PublishDev/update-check.json`.
+
+Updates require Git and a Swift toolchain capable of building the selected release. PublishDev downloads the exact release tag from this repository into a temporary directory, builds it, and checks its reported version. It then stages the new executable beside the installed one and renames it into place. A failed download, build, or verification leaves the existing executable working. Updates preserve your install location, Publish CLI, shim, and website files, and only one update per user and install location can run at a time.
+
+Run the updater as your normal user. If the install directory requires administrator access, only the final installation uses `sudo`; the source build runs as you. Noninteractive updates need `--yes` and pre-authorized installation permissions. Drafts, prereleases, and tags other than stable `vMAJOR.MINOR.PATCH` (or `MAJOR.MINOR.PATCH`) are not installed.
+
 ## Run
 
 From a website directory:
@@ -35,7 +54,7 @@ From a website directory:
 publish dev
 ```
 
-Open `http://localhost:8000` and keep the terminal running. Save an input to rebuild. **Press ENTER to stop the server and exit**, the same as `publish run`. Control-C also works.
+Open `http://localhost:8000` and keep the terminal running. Save an input to rebuild. **Press Return or Ctrl+C to stop the server and exit.** The reminder appears at startup and after every build, including failures. Ctrl+D also stops the session.
 
 ```sh
 publish dev --port 8080 --product MyWebsite --site /path/to/website
@@ -44,6 +63,16 @@ publish dev --port 8080 --product MyWebsite --site /path/to/website
 `--site` defaults to the current directory. `--product` is required when the website declares more than one executable product. Use `publish dev --help` for all options.
 
 The tool uses the `swift` and `python3` commands on your PATH and inherits your environment, including `DEVELOPER_DIR`.
+
+## Stopping and restarting
+
+Return, Ctrl+C, Ctrl+D, SIGTERM, and terminal hangup all stop the server and cancel an active build. Shutdown waits for child-process cleanup before releasing the website and port locks. Python also watches its parent, so force-killing PublishDev does not leave the preview server occupying its port.
+
+When another verified PublishDev session owns the website or port, an interactive terminal offers to stop it and restart here. The prompt shows the website, port, and process ID; Return defaults to **no**. Replacement checks the process owner, executable path, and start time again before sending SIGTERM, then waits up to 10 seconds for the session to release its lock. An older or unverifiable session must be stopped in its own terminal.
+
+If an unrelated application occupies the port, PublishDev offers an available port among the next 100 port numbers. It never terminates an unknown port owner. The printed preview address reflects the selected port. Noninteractive runs report conflicts and exit without prompting or replacing another session.
+
+Force-killing PublishDev bypasses its normal build and temporary-file cleanup. The Python watchdog still frees the preview port; an active compiler or custom build subprocess may need separate cleanup. A later session removes the stale preview directory. Use Return or Ctrl+C when possible.
 
 ## Inputs from a larger workspace
 
@@ -62,7 +91,7 @@ publish dev --site /path/to/otuli/website \
 
 ## How it works
 
-1. Start `python3 -m http.server PORT --bind 127.0.0.1 --directory PREVIEW`, the same web server `publish run` uses, on a preview directory in your temporary folder. It shows a waiting page until the first successful build.
+1. Start Python’s `http.server` module, bound to `127.0.0.1`, on a preview directory in your temporary folder. A small wrapper adds a parent watchdog and a readiness notification. It shows a waiting page until the first successful build.
 2. Poll input metadata every 250 ms. Combine bursts of changes after a short quiet period.
 3. Identify the website's executable, then run `swift run PRODUCT` in its package directory. Builds run serially; a save during a build queues another build.
 4. Copy `Output` into a staging directory beside the served one, inject the reload script into every page, write the new revision, then exchange the two directories in a single step. The preview only ever changes once a build has been staged completely.
@@ -90,8 +119,20 @@ Two PublishDev sessions cannot generate the same website at the same time. This 
 ## Verification
 
 ```sh
-make test    # or: swift test
+make test          # or: swift test
+make test-session  # terminal, replacement, and shutdown integration checks
 make lint
 ```
 
-The tests cover preview staging and injection, failure retention, symlink rejection, end-to-end serving through Python, input changes, option parsing, and child command execution. See [VALIDATION.md](VALIDATION.md) for the integration results.
+The Swift tests cover preview staging and injection, failure retention, symlink rejection, server readiness, input changes, option parsing, child command execution, and stale session locks. The terminal checks use a deterministic build fixture with real Python serving, pseudo-terminals, signals, and process cleanup. See [VALIDATION.md](VALIDATION.md) for the integration results.
+
+## Publishing a release
+
+The combined first release is **v0.1.0**. Before later releases, bump `ReleaseVersion.current` in `Sources/PublishDev/ReleaseVersion.swift`.
+
+1. Run `make test`, `make test-session`, `make lint`, and `make build`.
+2. Check `.build/release/publish-dev --version` matches the intended release version.
+3. Commit and push the changes, then create and push the matching tag, such as `v0.1.0`.
+4. Publish a regular GitHub Release for that tag and mark it as the latest release. A tag alone does not trigger update notifications.
+
+No binary release assets are required: the updater builds the tagged source on each user's Mac. Keep the tag and compiled version identical; mismatches are rejected before installation. See [CHANGELOG.md](CHANGELOG.md) for the first release notes.

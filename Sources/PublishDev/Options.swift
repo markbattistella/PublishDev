@@ -16,23 +16,27 @@ struct Options: Sendable {
     var site: URL
     var product: String?
     var port: UInt16 = 8000
+    var noUpdateCheck = false
     var extraPaths: [URL] = []
 
     static let help = """
         publish dev — rebuild and preview a Publish website as you save.
 
         Usage: publish dev [--site PATH] [--product NAME] [--port NUMBER] [--watch PATH ...]
+               publish dev update [--check | --yes]
 
           --site PATH      Website package directory (default: current directory).
           --product NAME   Executable product (auto-detected if there is only one).
           --port NUMBER    Local HTTP port (default: 8000).
           --watch PATH     Additional input file or directory; repeat for more paths.
                            Relative paths are resolved against the website directory.
+          --no-update-check  Skip the automatic GitHub release check.
+          --version       Show the installed PublishDev version.
           --help, -h       Show this help.
 
         Watches Content, Resources, Sources, Package.swift, and Package.resolved.
         Serves http://localhost:8000 by default, using the same Python web server
-        as `publish run`. Press ENTER to stop the server and exit.
+        as `publish run`. Press Return or Ctrl+C to stop the server and exit.
         """
 
     init(
@@ -43,6 +47,10 @@ struct Options: Sendable {
         var iterator = arguments.makeIterator()
         var watchPaths: [String] = []
         while let flag = iterator.next() {
+            if flag == "--no-update-check" {
+                noUpdateCheck = true
+                continue
+            }
             guard ["--site", "--product", "--port", "--watch"].contains(flag) else {
                 throw DevError("Unknown option: \(flag). Use --help for usage.")
             }

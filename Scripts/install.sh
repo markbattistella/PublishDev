@@ -78,8 +78,9 @@ fi
 echo
 echo "==> Building publish-dev"
 swift build --package-path "$ROOT" -c release
+BUILD_BIN=$(swift build --package-path "$ROOT" -c release --show-bin-path)
 $SUDO mkdir -p "$BINDIR"
-$SUDO install "$ROOT/.build/release/publish-dev" "$BINDIR/publish-dev"
+$SUDO install "$BUILD_BIN/publish-dev" "$BINDIR/publish-dev"
 echo "    Installed $BINDIR/publish-dev"
 
 if [ "$ADOPT_PUBLISH" = 1 ]; then
@@ -136,7 +137,8 @@ echo
 echo "Done."
 echo "  $BINDIR/publish      shim"
 echo "  $BINDIR/publish-cli  Publish CLI ($("$BINDIR/publish-cli" 2>/dev/null | head -1 || echo "installed"))"
-echo "  $BINDIR/publish-dev  PublishDev"
+echo "  $BINDIR/publish-dev  $("$BINDIR/publish-dev" --version)"
+echo "Future releases: publish dev update"
 echo
 case ":$PATH:" in
 *":$BINDIR:"*) echo "Try it: cd to a website and run 'publish dev'." ;;

@@ -1,10 +1,51 @@
-# Proof-of-concept validation
+# Validation
+
+## Release updater — 24 September 2026
+
+Validated with Xcode 27.1 beta (Swift 6.4) and Python 3.14.7 on Apple silicon macOS.
+
+- All 23 Swift tests passed, including parameterized stable-version parsing and numerical comparison, GitHub response handling, daily check throttling, manual refresh, offline failures, corrupt-cache recovery, skipped prompts, failed downloads/builds/version checks, cancellation, concurrent-update exclusion, and atomic replacement failure.
+- A real local Git tag was fetched into a fresh checkout, built with Swift in release configuration, checked for its expected version, and installed into a temporary prefix. This exercised the source updater without publishing a test release or changing the real installation.
+- Update fixtures with spaces in their paths preserved both the Publish CLI and the shim.
+- The release build reported `PublishDev 0.1.0`; update help and invalid-argument handling passed.
+- The installer was run twice against an isolated custom prefix with spaces, using the already-built release executable. Both runs preserved the existing Publish CLI, and `publish dev --version` worked through the installed shim.
+- The full terminal lifecycle harness passed against the release binary after moving signal handling to cover both updates and previews.
+- The public repository endpoint returned HTTP 200 and its latest-release endpoint returned HTTP 404: no stable release is published yet.
+- The release binary's `publish-dev update --check` succeeded against live GitHub and reported that no stable release is available. The checker uses macOS's built-in curl with a three-second limit; Foundation networking timed out in this environment while curl succeeded.
+
+The tests exercise unprivileged atomic installation. The administrator password flow is implemented but was not exercised with real sudo credentials. A live upgrade from a published GitHub release and automatic restart into that published version remain untested until a newer release exists. The minimum Swift and macOS versions were not separately tested.
+
+## Session lifecycle update — 24 September 2026
+
+Validated with Xcode 27.1 beta (Swift 6.4) and Python 3.14.7 on Apple silicon macOS. The package’s minimum supported toolchain and OS were not separately tested.
+
+Passed:
+
+- All 10 Swift tests, including stale-lock recovery, lock symlink rejection, and readiness that cannot be satisfied by an unrelated listener.
+- Strict Swift formatting lint and `git diff --check`.
+- Release build.
+- `Scripts/test-session.py` against the release executable: Return, Ctrl+C, Ctrl+D, SIGTERM, SIGHUP, closing the controlling pseudo-terminal, and SIGKILL all released the preview port.
+- The stop hint appeared after successful and failed builds.
+- Same-site and same-port replacement, default decline, and Ctrl+C during the replacement question.
+- Replacement waited for an active build and its descendants to stop before the new session built the website.
+- Unrelated port owners remained running while the new session used an offered alternative port.
+- Noninteractive conflicts exited promptly without replacing the original session.
+- Unverifiable session metadata did not authorize termination.
+- Return and terminal closure during a build cleaned up a descendant that had created its own process group.
+
+The terminal harness uses a deterministic fake `swift` command; Python serving, locks, process identities, pseudo-terminals, signals, and cancellation are real. Existing Swift tests also cover child command execution and HTTP serving. No real Publish website or browser UI was exercised in this update.
+
+Tests used a clean build directory (`swift test --scratch-path /tmp/publishdev-session-build`) after the existing `.build` test bundle failed code signing because of filesystem metadata. The clean run passed. Release validation used the same scratch directory and the executable reported by `swift build -c release --show-bin-path` for that directory.
+
+The Python parent watchdog handles abrupt parent death. SIGKILL cannot run PublishDev’s normal cleanup for build subprocesses or temporary files; the next session removes its stale preview directory.
+
+## Earlier proof-of-concept validation
 
 Validated on 9 September 2026 using stable Xcode 26.6 and Swift 6.3.3 on an Apple silicon Mac, with Python 3.14.7. The package requires Swift 6.2 and macOS 15; the minimum supported versions were not separately tested.
 
 The HTTP layer was replaced after the first round of validation: FlyingFox is gone, and the preview is now served by `python3 -m http.server`, the same web server `publish run` starts. The sections below say which results were produced against the current design and which have not been re-run.
 
-## Automated checks
+### Automated checks
 
 `swift test` covers eight tests:
 
@@ -19,7 +60,7 @@ The HTTP layer was replaced after the first round of validation: FlyingFox is go
 
 Swift formatting is checked with `swift format lint --strict --recursive Package.swift Sources Tests`.
 
-## Session behaviour
+### Session behaviour
 
 Driven against a synthetic website package through a pseudo-terminal, so the ENTER handling is exercised the way a real terminal drives it. Passed checks:
 
@@ -31,7 +72,7 @@ Driven against a synthetic website package through a pseudo-terminal, so the ENT
 - ENTER stopped the session with exit status 0, leaving no `publish-dev` or `python3 -m http.server` process behind.
 - Python's request log goes to a file in the preview directory rather than the terminal. This matters: the reload client polls several times a second, and an earlier build that inherited the terminal filled the pipe and wedged the server.
 
-## Installer
+### Installer
 
 Run against a sandbox `PREFIX`, never `/usr/local`:
 
@@ -41,7 +82,7 @@ Run against a sandbox `PREFIX`, never `/usr/local`:
 - Re-running the installer detects its own shim and the adopted `publish-cli`, and replaces only the shim.
 - `make uninstall` removes the shim, moves `publish-cli` back to `publish`, and removes `publish-dev`.
 
-## Not re-run against the current design
+### Not re-run in the earlier validation
 
 - Integration with a real Publish 0.8.0 website. The earlier round used an isolated copy of the Otuli website and passed, but it exercised the FlyingFox server; the generation, watching, and process handling paths are unchanged, and the serving path is not.
 - WebKit auto-refresh in an actual browser. The revision endpoint and reload script are covered by the tests above, but no real browser was driven after the change.

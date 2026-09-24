@@ -7,7 +7,7 @@
 import Darwin
 import Foundation
 
-/// A directory of static files served by `python3 -m http.server`.
+/// A directory of static files served by Python’s `http.server` module.
 ///
 /// Each successful build is staged beside the served directory and swapped in atomically, so a
 /// failed or partial build keeps the previous website visible.
