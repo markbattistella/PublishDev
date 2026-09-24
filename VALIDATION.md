@@ -1,5 +1,17 @@
 # Validation
 
+## Preview caching and release diagnostics — 25 September 2026
+
+GitHub run [36059443937](https://github.com/markbattistella/PublishDev/actions/runs/36059443937) passed version validation, release-tool tests, and formatting, but failed `servesTheStagedWebsiteWithPython`: the second request returned the first page and revision after a rebuild. The original test passed locally on Swift 6.4; the CI runner used Swift 6.2, so the exact stale-response failure was not reproduced locally.
+
+- Added `Cache-Control: no-store` to preview responses, including pages, assets, reload endpoints, and errors. This prevents clients from storing responses for reuse, as defined in [HTTP Caching, section 5.2.2.5](https://www.rfc-editor.org/rfc/rfc9111.html#section-5.2.2.5).
+- The strengthened regression test failed on missing headers before the server change and passed afterward. It keeps client caching enabled and verifies page, CSS, and revision updates across three consecutive rebuilds. Server readiness is awaited before making requests.
+- All 23 Swift tests, the release build, and strict formatting lint passed locally. Builds used a clean temporary scratch directory because the checkout's existing build directory had code-signing metadata errors.
+- All terminal session checks passed against the release executable, including Return, signals, terminal closure, replacement, port conflicts, and descendant cleanup.
+- Parsed the workflow YAML and exercised its failure-summary script for version, Swift test, terminal session, checkout, and manually published release failures. Summaries identify the failed stage and only show version-repair advice when that check fails.
+
+The updated workflow has not run on GitHub yet. A new release tag must include the fix; rerunning the old tag still checks its original source.
+
 ## One-command releases — 25 September 2026
 
 - All 30 release-tool tests passed, including publication to isolated local bare Git repositories. No real remote was pushed.

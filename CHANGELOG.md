@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prevent cached preview pages, assets, and reload revisions from surviving a rebuild.
+- Name the failed validation step in release summaries and show version-repair advice only when the version check fails.
 - Add `make release VERSION=x.y.z` to commit the version bump and atomically push the branch and tag for automatic GitHub publication, with checks for unfinished work, conflicting tags, and behind branches, plus retries after a failed push.
 - Add a version-preparation command that offers to fix the source version before committing and tagging.
 - Validate source and compiled versions, tests, and terminal behavior before automatically publishing a pushed release tag.

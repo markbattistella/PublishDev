@@ -49,7 +49,14 @@ enum PreviewServer {
         if os.getppid() != parent:
             sys.exit(0)
         threading.Thread(target=watch_parent, daemon=True).start()
-        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[3])
+
+        class PreviewHandler(http.server.SimpleHTTPRequestHandler):
+            def end_headers(self):
+                # Every rebuild can replace the same URLs, including pages and assets.
+                self.send_header("Cache-Control", "no-store")
+                super().end_headers()
+
+        handler = functools.partial(PreviewHandler, directory=sys.argv[3])
         with http.server.ThreadingHTTPServer(("127.0.0.1", port), handler) as server:
             pathlib.Path(sys.argv[4]).write_text("ready")
             server.serve_forever()

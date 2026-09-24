@@ -36,39 +36,70 @@ jobs:
       commit: ${{ steps.revision.outputs.commit }}
     steps:
       - uses: actions/checkout@v7
+        id: checkout
         with:
           ref: refs/tags/${{ env.RELEASE_TAG }}
           persist-credentials: false
       - name: Reject a tag that does not match the source version
+        id: version
         run: python3 Scripts/release.py check "$RELEASE_TAG"
       - name: Record the commit being validated
         id: revision
         run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Test release tooling
+        id: release_tools
         run: make test-release
       - name: Check Swift formatting
+        id: formatting
         run: make lint
       - name: Run Swift tests
+        id: swift_tests
         run: make test
       - name: Build and verify the actual release executable
+        id: build
         run: |
           swift build -c release
           release_bin_dir=$(swift build -c release --show-bin-path)
           python3 Scripts/release.py check "$RELEASE_TAG" --binary "$release_bin_dir/publish-dev"
+      - name: Test terminal sessions
+        id: sessions
+        run: |
+          release_bin_dir=$(swift build -c release --show-bin-path)
           python3 Scripts/test-session.py "$release_bin_dir/publish-dev"
       - name: Explain a blocked release
         if: failure()
         env:
           TRIGGER: ${{ github.event_name }}
+          STEP_RESULTS: ${{ toJSON(steps) }}
+        shell: python
         run: |
-          {
-            echo '### Release validation failed'
-            echo 'See the failed step above. No release was published by this workflow.'
-            echo 'For a version mismatch, commit your code changes and run `make release VERSION=<new-unused-version>` to commit the matching version and push the branch and tag together.'
-            if [ "$TRIGGER" = release ]; then
-              echo '**This release was already published manually. Unpublish the invalid release and publish a corrected version through the tag workflow.**'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+          steps = json.loads(os.environ["STEP_RESULTS"])
+          names = {
+              "checkout": "Check out the release tag",
+              "version": "Check source version against tag",
+              "revision": "Record the tagged commit",
+              "release_tools": "Test release tooling",
+              "formatting": "Check Swift formatting",
+              "swift_tests": "Run Swift tests",
+              "build": "Build and verify the release executable",
+              "sessions": "Test terminal sessions",
+          }
+          failed = [name for name in names if steps.get(name, {}).get("outcome") == "failure"]
+          run_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("### Release validation failed\n\n")
+              for name in failed:
+                  summary.write(f"- **Failed: {names[name]}**\n")
+              summary.write(f"\n[Open the failed job logs]({run_url}) for the exact error.\n\n")
+              summary.write("No release was published by this workflow.\n\n")
+              if "version" in failed:
+                  summary.write("The source-version check failed. Follow its error message to correct the version.\n\n")
+              elif steps.get("version", {}).get("outcome") == "success":
+                  summary.write("The source version matches the tag; the failure is in a later check.\n\n")
+              summary.write("If the fix changes code, commit it, then run `make release VERSION=<new-unused-version>`. Rerunning this tag uses the original code.\n")
+              if os.environ["TRIGGER"] == "release":
+                  summary.write("\n**This release was already published manually. Unpublish the invalid release and publish a corrected version through the tag workflow.**\n")
 
   publish:
     name: Publish the validated tag

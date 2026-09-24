@@ -212,34 +212,31 @@ func servesTheStagedWebsiteWithPython() async throws {
         }
         defer { group.cancelAll() }
 
-        let session = URLSession(configuration: .ephemeral)
+        try await PreviewServer.waitUntilListening(
+            port: port, log: folder.appendingPathComponent("server.log"))
+
+        // Keep normal HTTP caching enabled: the server must prevent stale previews itself.
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = URLCache(memoryCapacity: 1_048_576, diskCapacity: 0)
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
         func get(_ path: String) async throws -> (String, HTTPURLResponse) {
             let url = try #require(URL(string: "http://127.0.0.1:\(port)\(path)"))
             let (data, response) = try await session.data(from: url)
-            return (
-                String(decoding: data, as: UTF8.self), try #require(response as? HTTPURLResponse)
-            )
+            let http = try #require(response as? HTTPURLResponse)
+            #expect(http.value(forHTTPHeaderField: "Cache-Control") == "no-store")
+            return (String(decoding: data, as: UTF8.self), http)
         }
 
-        var revision = ""
-        for _ in 0..<100 {
-            if let (body, response) = try? await get("/\(Preview.revisionPath)"),
-                response.statusCode == 200
-            {
-                revision = body
-                break
-            }
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        #expect(!revision.isEmpty)
+        let (revision, revisionResponse) = try await get("/\(Preview.revisionPath)")
+        try #require(revisionResponse.statusCode == 200)
+        try #require(!revision.isEmpty)
         #expect(throws: DevError.self) { try PreviewServer.checkPort(port) }
         await #expect(throws: DevError.self) {
             try await PreviewServer.waitUntilListening(
                 port: port, log: folder.appendingPathComponent("another-server.log"),
                 timeout: .milliseconds(75))
         }
-        try await PreviewServer.waitUntilListening(
-            port: port, log: folder.appendingPathComponent("server.log"))
 
         let (home, homeResponse) = try await get("/")
         #expect(homeResponse.statusCode == 200)
@@ -253,12 +250,22 @@ func servesTheStagedWebsiteWithPython() async throws {
         let (script, _) = try await get("/\(Preview.reloadPath)")
         #expect(script.contains("location.reload"))
 
-        try write("<html><body>Second version</body></html>", to: "index.html", in: output)
-        try preview.publish(output: output)
-        let (updated, _) = try await get("/")
-        let (next, _) = try await get("/\(Preview.revisionPath)")
-        #expect(updated.contains("Second version"))
-        #expect(next != revision)
+        var previousRevision = revision
+        for version in ["Second", "Third", "Fourth"] {
+            try write("<html><body>\(version) version</body></html>", to: "index.html", in: output)
+            try write("/* \(version) */", to: "assets/main.css", in: output)
+            try preview.publish(output: output)
+            let (updated, _) = try await get("/")
+            let (next, _) = try await get("/\(Preview.revisionPath)")
+            let (updatedCSS, _) = try await get("/assets/main.css")
+            #expect(updated.contains("\(version) version"))
+            #expect(next != previousRevision)
+            #expect(updated.contains("/\(Preview.reloadPath)?revision=\(next)"))
+            #expect(updatedCSS == "/* \(version) */")
+            previousRevision = next
+        }
+        let (_, missingResponse) = try await get("/missing.html")
+        #expect(missingResponse.statusCode == 404)
 
         group.cancelAll()
         while !group.isEmpty { _ = await group.nextResult() }
