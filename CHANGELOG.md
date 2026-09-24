@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Start the loopback preview server without reverse DNS, report Python startup errors in failed tests, and let parallel server tests use OS-assigned ports.
+- Validate ordinary branch pushes and pull requests before creating release tags.
 - Prevent cached preview pages, assets, and reload revisions from surviving a rebuild.
 - Name the failed validation step in release summaries and show version-repair advice only when the version check fails.
 - Add `make release VERSION=x.y.z` to commit the version bump and atomically push the branch and tag for automatic GitHub publication, with checks for unfinished work, conflicting tags, and behind branches, plus retries after a failed push.

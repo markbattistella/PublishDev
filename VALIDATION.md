@@ -1,5 +1,17 @@
 # Validation
 
+## Preview startup and validation without tags — 25 September 2026
+
+GitHub run [36061709866](https://github.com/markbattistella/PublishDev/actions/runs/36061709866) passed version checks and release-tool tests, but the preview test timed out waiting for server readiness. The test previously waited in the task-group body, so an early Python error could be hidden behind that timeout. The available log does not establish the exact cause of that runner's startup delay.
+
+- Removed the reverse-DNS lookup in Python's `HTTPServer.server_bind` for the loopback-only preview. The old server fails before readiness when `socket.getfqdn` is forced to fail; the new Swift regression test starts and serves a page with `getfqdn` and `gethostbyaddr` disabled.
+- Server tests now await the HTTP checks and server process together, preserve Python output on failure, and use OS-assigned ports. The readiness file publishes the bound port atomically. Startup timeout errors also include recent server output.
+- All 24 Swift tests passed locally on Swift 6.4, including repeated preview rebuilds and DNS-independent startup. Swift formatting lint and workflow YAML parsing passed.
+- All 30 release-tool tests, the release build, and the complete terminal lifecycle harness passed. `git diff --check` passed.
+- Added **Validate changes** on branch pushes, pull requests, and manual runs. It uses the release workflow's macOS 15 / Xcode 26.2 configuration and runs tests, formatting, the release build, and terminal checks without publishing.
+
+The changes have not yet run on the GitHub runner. Push the fix as a normal commit to validate it before creating another release tag.
+
 ## Preview caching and release diagnostics — 25 September 2026
 
 GitHub run [36059443937](https://github.com/markbattistella/PublishDev/actions/runs/36059443937) passed version validation, release-tool tests, and formatting, but failed `servesTheStagedWebsiteWithPython`: the second request returned the first page and revision after a rebuild. The original test passed locally on Swift 6.4; the CI runner used Swift 6.2, so the exact stale-response failure was not reproduced locally.

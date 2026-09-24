@@ -1,0 +1,43 @@
+name: Validate changes
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Test before tagging
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Report toolchain versions
+        run: |
+          swift --version
+          python3 --version
+          command -v python3
+      - name: Test release tooling
+        run: make test-release
+      - name: Check Swift formatting
+        run: make lint
+      - name: Run Swift tests
+        run: make test
+      - name: Build the release executable
+        run: swift build -c release
+      - name: Test terminal sessions
+        run: |
+          release_bin_dir=$(swift build -c release --show-bin-path)
+          python3 Scripts/test-session.py "$release_bin_dir/publish-dev"

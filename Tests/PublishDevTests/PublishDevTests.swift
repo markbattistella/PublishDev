@@ -199,22 +199,7 @@ func servesTheStagedWebsiteWithPython() async throws {
     try write("body {}", to: "assets/main.css", in: output)
     try preview.publish(output: output)
 
-    let port = try #require(
-        (8730...8780).first { port in
-            (try? PreviewServer.checkPort(UInt16(port))) != nil
-        }.map(UInt16.init))
-
-    try await withThrowingTaskGroup(of: Void.self) { group in
-        group.addTask {
-            try await PreviewServer.run(
-                directory: preview.live, port: port,
-                log: folder.appendingPathComponent("server.log"))
-        }
-        defer { group.cancelAll() }
-
-        try await PreviewServer.waitUntilListening(
-            port: port, log: folder.appendingPathComponent("server.log"))
-
+    try await withPreviewServer(preview, in: folder) { port in
         // Keep normal HTTP caching enabled: the server must prevent stale previews itself.
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = URLCache(memoryCapacity: 1_048_576, diskCapacity: 0)
@@ -266,10 +251,80 @@ func servesTheStagedWebsiteWithPython() async throws {
         }
         let (_, missingResponse) = try await get("/missing.html")
         #expect(missingResponse.statusCode == 404)
-
-        group.cancelAll()
-        while !group.isEmpty { _ = await group.nextResult() }
     }
+}
+
+/// Race the HTTP checks against server failure, so an exited Python process cannot be hidden
+/// behind a readiness timeout. Always cancel and reap the server before removing its fixtures.
+private func withPreviewServer(
+    _ preview: Preview, in folder: URL,
+    runServer: @escaping @Sendable (URL, UInt16, URL) async throws -> Void = {
+        try await PreviewServer.run(directory: $0, port: $1, log: $2)
+    },
+    check: @escaping @Sendable (UInt16) async throws -> Void
+) async throws {
+    // Let the OS choose and bind a port, avoiding a check-then-bind race between parallel tests.
+    let port: UInt16 = 0
+    let serverLog = folder.appendingPathComponent("server.log")
+    do {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            defer { group.cancelAll() }
+            group.addTask {
+                try await runServer(preview.live, port, serverLog)
+            }
+            group.addTask {
+                try await PreviewServer.waitUntilListening(port: port, log: serverLog)
+                let boundPort = try #require(
+                    UInt16(
+                        String(
+                            contentsOf: serverLog.appendingPathExtension("ready"), encoding: .utf8))
+                )
+                try #require(boundPort > 0)
+                try await check(boundPort)
+            }
+            try await group.next()
+        }
+    } catch {
+        if let output = try? String(contentsOf: serverLog, encoding: .utf8) {
+            print("Preview server log:\n\(output)")
+        }
+        throw error
+    }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func previewStartsWithoutDNSResolution() async throws {
+    let (preview, folder, _) = try makePreview()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    try await withPreviewServer(
+        preview, in: folder,
+        runServer: { directory, port, log in
+            let noDNS = """
+                import socket
+                def unavailable_dns(*args, **kwargs):
+                    raise RuntimeError("Preview startup must not require DNS")
+                socket.getfqdn = unavailable_dns
+                socket.gethostbyaddr = unavailable_dns
+
+                """
+            let status = try await ChildProcess.run(
+                [
+                    "python3", "-u", "-c", noDNS + PreviewServer.serverScript,
+                    String(getpid()), String(port), directory.path,
+                    log.appendingPathExtension("ready").path,
+                ], in: directory, stdout: log, stderr: log)
+            throw DevError(
+                "Preview server exited before the DNS-independent check (exit \(status)).")
+        },
+        check: { port in
+            let url = try #require(URL(string: "http://127.0.0.1:\(port)/"))
+            let session = URLSession(configuration: .ephemeral)
+            defer { session.invalidateAndCancel() }
+            let (data, response) = try await session.data(from: url)
+            #expect((response as? HTTPURLResponse)?.statusCode == 200)
+            #expect(
+                String(decoding: data, as: UTF8.self).contains("Waiting for a successful build"))
+        })
 }
 
 @Test func staleSessionMetadataDoesNotBlockRestart() async throws {

@@ -49,6 +49,12 @@ jobs:
       - name: Test release tooling
         id: release_tools
         run: make test-release
+      - name: Report toolchain versions
+        id: toolchain
+        run: |
+          swift --version
+          python3 --version
+          command -v python3
       - name: Check Swift formatting
         id: formatting
         run: make lint
@@ -80,6 +86,7 @@ jobs:
               "version": "Check source version against tag",
               "revision": "Record the tagged commit",
               "release_tools": "Test release tooling",
+              "toolchain": "Report toolchain versions",
               "formatting": "Check Swift formatting",
               "swift_tests": "Run Swift tests",
               "build": "Build and verify the release executable",

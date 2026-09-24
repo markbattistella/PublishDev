@@ -126,6 +126,8 @@ make lint
 
 The Swift tests cover preview staging and injection, failure retention, symlink rejection, server readiness, input changes, option parsing, child command execution, and stale session locks. The terminal checks use a deterministic build fixture with real Python serving, pseudo-terminals, signals, and process cleanup. See [VALIDATION.md](VALIDATION.md) for the integration results.
 
+The **Validate changes** workflow runs on branch pushes and pull requests, and can be started manually. It runs the tests, formatting checks, release build, and terminal checks on the same macOS and Swift toolchain as release validation, without creating a tag or publishing a release. When troubleshooting CI, push the fix as a normal commit and wait for this check before releasing.
+
 ## Publishing a release
 
 Commit your code and release notes as usual, then release with one command:

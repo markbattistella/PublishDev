@@ -36,8 +36,8 @@ enum PreviewServer {
 
     // The watchdog lives inside Python, so it still runs after PublishDev is force-killed.
     // getppid changes when the parent dies; no PID-only lookup or extra daemon is needed.
-    private static let serverScript = """
-        import functools, http.server, os, pathlib, sys, threading, time
+    static let serverScript = """
+        import functools, http.server, os, pathlib, socketserver, sys, threading, time
 
         parent, port = int(sys.argv[1]), int(sys.argv[2])
 
@@ -50,6 +50,14 @@ enum PreviewServer {
             sys.exit(0)
         threading.Thread(target=watch_parent, daemon=True).start()
 
+        class PreviewHTTPServer(http.server.ThreadingHTTPServer):
+            def server_bind(self):
+                # HTTPServer.server_bind performs reverse DNS even for 127.0.0.1.
+                # A loopback-only preview must start without waiting for a DNS resolver.
+                socketserver.TCPServer.server_bind(self)
+                self.server_name = "localhost"
+                self.server_port = self.server_address[1]
+
         class PreviewHandler(http.server.SimpleHTTPRequestHandler):
             def end_headers(self):
                 # Every rebuild can replace the same URLs, including pages and assets.
@@ -57,8 +65,12 @@ enum PreviewServer {
                 super().end_headers()
 
         handler = functools.partial(PreviewHandler, directory=sys.argv[3])
-        with http.server.ThreadingHTTPServer(("127.0.0.1", port), handler) as server:
-            pathlib.Path(sys.argv[4]).write_text("ready")
+        print("Starting preview with " + sys.executable + " on 127.0.0.1:" + str(port), flush=True)
+        with PreviewHTTPServer(("127.0.0.1", port), handler) as server:
+            ready = pathlib.Path(sys.argv[4])
+            pending = ready.with_name(ready.name + ".tmp")
+            pending.write_text(str(server.server_address[1]))
+            pending.replace(ready)
             server.serve_forever()
         """
 
@@ -77,7 +89,12 @@ enum PreviewServer {
             if FileManager.default.fileExists(atPath: readyFile(for: log).path) { return }
             try await Task.sleep(for: .milliseconds(25))
         }
-        throw DevError("The preview server did not start on port \(port) within the expected time.")
+        let output = (try? String(contentsOf: log, encoding: .utf8))?
+            .split(separator: "\n").suffix(10).joined(separator: "\n")
+        throw DevError(
+            "The preview server did not start on port \(port) within the expected time.\n"
+                + (output?.isEmpty == false ? output! : "Python produced no server output.")
+        )
     }
 
     static func availablePort(after port: UInt16) throws -> UInt16? {
