@@ -8,7 +8,7 @@ import Foundation
 
 /// Stable release versions only. Drafts, prereleases, and non-version tags are not updates.
 struct ReleaseVersion: Comparable, Sendable, CustomStringConvertible {
-    // Bump this before tagging and publishing the matching GitHub release (v0.1.0).
+    // Use make prepare-release VERSION=x.y.z before committing and tagging a release.
     static let current = ReleaseVersion(major: 0, minor: 1, patch: 0)
 
     let major: Int

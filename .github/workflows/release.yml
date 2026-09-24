@@ -1,0 +1,110 @@
+name: Validate and publish release
+
+on:
+  push:
+    tags:
+      - '[0-9]*.[0-9]*.[0-9]*'
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to validate (does not publish)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+
+jobs:
+  validate:
+    name: Check release version and tests
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      # macos-15 still defaults to Xcode 16.4; this package needs Swift 6.2 or newer.
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    outputs:
+      commit: ${{ steps.revision.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - name: Reject a tag that does not match the source version
+        run: python3 Scripts/release.py check "$RELEASE_TAG"
+      - name: Record the commit being validated
+        id: revision
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Test release tooling
+        run: make test-release
+      - name: Check Swift formatting
+        run: make lint
+      - name: Run Swift tests
+        run: make test
+      - name: Build and verify the actual release executable
+        run: |
+          swift build -c release
+          release_bin_dir=$(swift build -c release --show-bin-path)
+          python3 Scripts/release.py check "$RELEASE_TAG" --binary "$release_bin_dir/publish-dev"
+          python3 Scripts/test-session.py "$release_bin_dir/publish-dev"
+      - name: Explain a blocked release
+        if: failure()
+        env:
+          TRIGGER: ${{ github.event_name }}
+        run: |
+          {
+            echo '### Release validation failed'
+            echo 'See the failed step above. No release was published by this workflow.'
+            echo 'For a version mismatch, run `make prepare-release VERSION=<new-version>`, commit the change, and tag that commit.'
+            if [ "$TRIGGER" = release ]; then
+              echo '**This release was already published manually. Unpublish the invalid release and publish a corrected version through the tag workflow.**'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish the validated tag
+    needs: validate
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VALIDATED_COMMIT: ${{ needs.validate.outputs.commit }}
+    steps:
+      # This job never builds or executes the tagged source with a write token.
+      - name: Verify the remote tag still points to the tested commit
+        shell: python
+        run: |
+          import json, os, subprocess
+          repository = os.environ["GH_REPO"]
+          tag = os.environ["RELEASE_TAG"]
+          def get(path):
+              return json.loads(subprocess.check_output(["gh", "api", path], text=True))
+          target = get(f"repos/{repository}/git/ref/tags/{tag}")["object"]
+          for _ in range(10):
+              if target["type"] == "commit":
+                  break
+              if target["type"] != "tag":
+                  raise SystemExit("Release tag does not point to a commit.")
+              target = get(f"repos/{repository}/git/tags/{target['sha']}")["object"]
+          if target["type"] != "commit" or target["sha"] != os.environ["VALIDATED_COMMIT"]:
+              raise SystemExit("Release tag changed after validation. Nothing was published; validate the tag again.")
+      - name: Publish a GitHub Release
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "A release already exists for $RELEASE_TAG; leaving it unchanged."
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TAG" --generate-notes
+          fi

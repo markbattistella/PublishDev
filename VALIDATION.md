@@ -1,5 +1,15 @@
 # Validation
 
+## Release publication checks — 24 September 2026
+
+- All 14 release-tool tests passed: source/tag and binary/version mismatches, stable tag parsing, interactive approval and decline, explicit noninteractive approval, downgrade rejection, CLI exit codes, and GitHub error annotations.
+- The local source and the existing release executable both passed `Scripts/release.py check 0.1.0 --binary ...`.
+- `actionlint` 1.7.12 accepted the GitHub Actions workflow. Its downloaded archive was checked against the publisher's SHA-256 checksums before use.
+- The workflow's publication scripts were exercised with a fake GitHub CLI: lightweight tags and annotated tags pointing to the tested commit passed; a moved tag failed; an existing release was not changed. The publishing job depends on successful validation and runs only for tag pushes.
+- Strict Swift formatting lint and `git diff --check` passed. The only Swift change is a comment pointing maintainers to the preparation command.
+
+The GitHub-hosted workflow and real release publication have not been run from this checkout. Commit the workflow and helper into the release commit before pushing its tag. Publishing manually through GitHub remains possible and makes the release visible before its validation run.
+
 ## Release updater — 24 September 2026
 
 Validated with Xcode 27.1 beta (Swift 6.4) and Python 3.14.7 on Apple silicon macOS.

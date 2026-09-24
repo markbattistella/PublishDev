@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add a version-preparation command that offers to fix the source version before committing and tagging.
+- Validate source and compiled versions, tests, and terminal behavior before automatically publishing a pushed release tag.
+- Flag invalid manually published releases with a clear explanation and repair instructions.
+
 ## 0.1.0
 
 - Preview a Publish website locally, rebuild when inputs change, and refresh the browser after successful builds.
