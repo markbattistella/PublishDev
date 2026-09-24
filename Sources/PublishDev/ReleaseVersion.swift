@@ -9,7 +9,7 @@ import Foundation
 /// Stable release versions only. Drafts, prereleases, and non-version tags are not updates.
 struct ReleaseVersion: Comparable, Sendable, CustomStringConvertible {
     // Use make release VERSION=x.y.z to commit the version and publish a validated release.
-    static let current = ReleaseVersion(major: 1, minor: 0, patch: 0)
+    static let current = ReleaseVersion(major: 1, minor: 0, patch: 1)
 
     let major: Int
     let minor: Int
